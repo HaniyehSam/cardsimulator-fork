@@ -1,0 +1,16 @@
+<?xml version="1.0"?>
+
+<!--
+	About this card set. Every field is optional.
+	- title:       browser tab and top-left label
+	- repo:        the "github" link in the footer
+	- url:         public address of the site; QR codes in generated PDFs point here
+	- description: short text for search engines and link previews
+-->
+
+<cardset>
+	<title>My Cards</title>
+	<repo>https://github.com/USER/REPOSITORY</repo>
+	<url>https://USER.github.io/REPOSITORY/</url>
+	<description>Brainstorming cards. Arrange, think, discuss.</description>
+</cardset>

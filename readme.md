@@ -2,40 +2,82 @@
 
 A **tool** to visualise / create / provide **brainstorming cards**.
 
-- digital cards (browser)
-- print & play PDFs (work in progress)
-- a lot of links
+- digital cards in the browser: arrange them (stacks, pile, random 5), sort a–z, flip one to read its questions
+- "inspire me": a random link from the card; "more": all of its links
+- phones: a scrolling list, cards open full screen, swipe for the next / previous card
+- print & play PDFs (63 × 88 mm cards or A4 sheets, QR code on the front or back, color or black & white)
 
 Arrange / think / discuss!
 
 Based on: https://bitbucket.org/csongorb/porncreator/
 
-Curently used in:
+Currently used in:
 
-- https://csongorb.github.io/leveldesigncards/
+- Level Design Cards: https://csongorb.github.io/leveldesigncards/
 	- https://github.com/csongorb/leveldesigncards
-- work in progress
-	- **Dissecting Games**
-	- **Narrative Design Porn**
-	- **Interface Design Cards**
+- Dissecting Games: https://csongorb.github.io/dissectinggames/
+	- https://github.com/csongorb/dissectinggames
+- Interface Design Cards: https://csongorb.github.io/interfacedesigncards/
+	- https://github.com/csongorb/interfacedesigncards
+- Narrative Design Cards: https://csongorb.github.io/narrativedesigncards/
+	- https://github.com/csongorb/narrativedesigncards
 
 ## Structure
 
-Add **this repository** as a submodule to an **other repository** that contains the following structure:
+This repository holds everything that **renders** a card set. Card-set repositories hold **content only** and include this repository as a git submodule.
 
-- `/cards/cardsCategories.xml`
-- `/cards/cards.xml`
-- `index.html` (similar to the index.html in this repository)
+- `cardsimulator.js`: loader; the only file a card set's `index.html` references. It finds its own location, adds the stylesheet, builds the page and loads the libraries (their versions live only here).
+- `src/`: the app (ES modules, no build step)
+	- `app.js`: card table, layouts, dragging, flipping
+	- `data.js`: reads `cards/cardset.xml`, `cards/cardCategories.xml`, `cards/cards.xml`
+	- `pdf.js`: print & play PDF export
+	- `color.js`: readable text and edge colors for any category color
+	- `styles.css`
+- `fonts/`: font embedded in the PDFs
+- `template/`: starter kit for a new card set
+- `journal/`: changelog, journal, screenshots
 
-The other repository is intended to be deployed via GitHub Pages, resulting in the working Card Simulator. The main idea is that the content of the cards can be easily changed by pushing to the right branch of the other repository.
+A card set looks like this:
 
-Important:
+```
+mycards/
+  index.html                     tiny loader (same in every card set)
+  cards/cardset.xml              title, repo, public url (QR codes)
+  cards/cardCategories.xml
+  cards/cards.xml
+  texts/                         documents linked from the cards
+  .github/workflows/deploy.yml   publishes to GitHub Pages
+  cardsimulator/                 this repository, as a submodule (pinned)
+```
 
-- `index.html` in this repository is NOT intended to work (see above)!
-- the `js-files` in this repository load some `XML-files` from the other repository
-	- this **may not work locally** in your browser due to some Cross Origin Request (CORS) issues, which may cause your browser to block loading the XML-files
-	- strangely / funilly (I still don't fully understand it) the system works when deployed via GitHub Pages
-	- you can block CORS on your browser with a plugin
+## New card set
+
+1. Create an empty repository on GitHub, clone it.
+2. Copy everything from `template/` into it (including the hidden `.github/` folder and `.gitignore`).
+3. Add the simulator: `git submodule add https://github.com/csongorb/cardsimulator.git cardsimulator`
+4. Edit `cards/cardset.xml`, `cards/cardCategories.xml` and `cards/cards.xml`.
+5. Commit and push.
+6. On GitHub: Settings → Pages → Source → **GitHub Actions**.
+
+## Updating a card set to a newer simulator
+
+The submodule is pinned to a commit, so card sets only change when you decide:
+
+```
+git -C cardsimulator pull origin main
+git add cardsimulator
+git commit -m "Update cardsimulator"
+```
+
+## Run locally
+
+Any static web server, from the card-set folder (the XML can't be loaded from `file://`):
+
+```
+python -m http.server
+```
+
+Then open http://localhost:8000/. Links like `?card=leveldesign` open a card directly.
 
 ## Changelog & Journal
 
@@ -64,4 +106,3 @@ Additional design / coding:
 This work is licensed under a [Creative Commons Attribution-NonCommercial 4.0 International License](http://creativecommons.org/licenses/by-nc/4.0/).
 
 All other media (images, software, etc.) remain the property of their copyright holders.
-

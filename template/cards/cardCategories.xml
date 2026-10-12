@@ -1,0 +1,28 @@
+<?xml version="1.0"?>
+
+<!--
+	Categories, referenced from cards.xml by their position (first = 0).
+	- color:      hex color without "#"; "000000" marks the black title card
+	- row:        stacks with the same row are laid out next to each other
+	- onlyBorder: "true" draws black cards with a colored border (questions, tasks)
+-->
+
+<cardCategories>
+
+	<cardCategory row="0" color="000000">
+		<title>title</title>
+	</cardCategory>
+
+	<cardCategory row="1" color="860000">
+		<title>theories</title>
+	</cardCategory>
+
+	<cardCategory row="1" color="193A32">
+		<title>examples</title>
+	</cardCategory>
+
+	<cardCategory row="2" color="f441a0" onlyBorder="true">
+		<title>questions</title>
+	</cardCategory>
+
+</cardCategories>

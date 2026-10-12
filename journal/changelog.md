@@ -21,7 +21,32 @@
 	- some are working with a flexible amount of referenced (URL) cards
 	- some others not
 
-## Release 0.40 (Work in Progress)
+## Release 0.50 (Work in Progress)
+
+- new card table, replacing the p5.js simulator (the old files are in the git history)
+	- plain HTML/CSS/JS modules, no build step, no p5.js
+	- responsive: desktop, tablet, phone
+	- click a card to flip it: questions on the back, "inspire me" (random link) and "more" (numbered link list)
+	- "random card", stacks / pile / random 5 (a pile and five cards around it), shuffle, a–z sorting, category filters
+	- short deep links: `?card=name` opens the card
+	- cards have the printed shape (63 × 88) with rounded corners; Helvetica Neue UltraLight throughout
+	- phones: scrolling list, cards open full screen, swipe left / right for the next / previous card, down to close
+	- question / task cards only show when their own category is on (and, if topics are on, one of their topics)
+	- text color picked per category color for readability
+- clean split between simulator and card sets
+	- `cardsimulator.js` loader: a card set's `index.html` is ~10 lines and identical everywhere
+	- `cards/cardset.xml`: title, repository, public url
+	- no hardcoded paths into the host repository
+	- `template/` with a GitHub Pages deploy workflow (replaces the `xmlfiles.html` workaround)
+- PDF export
+	- one 63 × 88 mm card per page, or A4 sheets (3 × 3 with cut lines)
+	- QR code: none, on the front, or on the back (A4 backs mirrored for double-sided printing)
+	- color or black & white
+	- QR codes point to the public url from `cardset.xml` (or keep the page path)
+	- QR codes are transparent PNGs in the card's ink color
+	- question / task cards can be printed too (never with a QR code)
+
+## Release 0.40
 
 - finally: proper setup with separate repositories 
 	- p5.js can directly access the XML files in the other repository

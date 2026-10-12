@@ -1,0 +1,48 @@
+<?xml version="1.0"?>
+
+<!--
+	Cards
+	- cardCategoryId: position of the category in cardCategories.xml (first = 0)
+	- title: "/" marks a line break on the card; the first line names the card in
+	  links (?card=...), use forcedFilename="..." to set that name yourself
+	- text: questions separated by "#" (or topics separated by " / ")
+	- link: any number; a comment right after a link, on the same line, is shown
+	  as its label, e.g. <link>https://...</link> <!- - My label - ->
+	- characters: write "&" as "&#x26;"; wrap links containing "&" in <![CDATA[ ... ]]>
+
+	Question / task cards: type="display", a <text> and any number of <tag>s
+	(category positions they relate to).
+-->
+
+<cards>
+
+	<card>
+		<cardCategoryId>0</cardCategoryId>
+		<title forcedFilename="mycards">my/cards</title>
+		<text>arrange # think # discuss! # read between the cards!</text>
+		<link>https://github.com/csongorb/cardsimulator</link> <!-- Card Simulator -->
+	</card>
+
+	<card>
+		<cardCategoryId>1</cardCategoryId>
+		<title>first/theory</title>
+		<text>what is it? # examples? # how does it connect to the other cards?</text>
+		<link>https://en.wikipedia.org/wiki/Brainstorming</link>
+		<link><![CDATA[https://www.youtube.com/results?search_query=game+design&sp=EgIQAQ%3D%3D]]></link> <!-- A video search -->
+	</card>
+
+	<card>
+		<cardCategoryId>2</cardCategoryId>
+		<title>any game</title>
+		<text>what is it about? # who made it? # what would you change?</text>
+		<link>https://en.wikipedia.org/wiki/Video_game</link>
+	</card>
+
+	<card type="display">
+		<cardCategoryId>3</cardCategoryId>
+		<tag>1</tag>
+		<tag>2</tag>
+		<text>Which theory explains your favourite game best?</text>
+	</card>
+
+</cards>
