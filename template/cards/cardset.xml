@@ -6,6 +6,9 @@
 	- repo:        the "github" link in the footer
 	- url:         public address of the site; QR codes in generated PDFs point here
 	- description: short text for search engines and link previews
+	- grading:     by default each color keeps its look and is only darkened where white
+	               text would be hard to read; "calm" pulls all colors into one muted band;
+	               "off" shows the colors from cardCategories.xml exactly as they are
 -->
 
 <cardset>

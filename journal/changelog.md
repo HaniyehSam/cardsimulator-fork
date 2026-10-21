@@ -32,7 +32,13 @@
 	- cards have the printed shape (63 × 88) with rounded corners; Helvetica Neue UltraLight throughout
 	- phones: scrolling list, cards open full screen, swipe left / right for the next / previous card, down to close
 	- question / task cards only show when their own category is on (and, if topics are on, one of their topics)
-	- text color picked per category color for readability
+	- color grading: each card set keeps its own palette; a color is only darkened (in OKLCH, same hue) where pure white text would fall below 4.5:1. `<grading>` in `cardset.xml`: `calm` (one shared muted band) or `off` (XML colors as they are)
+	- prompts on the back of a card are questions: each one ends with a "?" (task cards stay as written)
+	- the table is hidden while a card is open (solid black behind it)
+	- sharp text: readable cards lie straight on whole pixels (only cards covered in a pile are slightly turned); an opened card drops its 3D once it has turned
+	- one motion language: hover lifts, picking up straightens and raises a card, dragging follows the pointer, putting down settles
+	- previous / next on every opened card (also swipe and arrow keys): the card stays, its content slides, and the color blends only when the category changes
+	- the PDF panel opens and closes like a card, out of the "pdf" button
 - clean split between simulator and card sets
 	- `cardsimulator.js` loader: a card set's `index.html` is ~10 lines and identical everywhere
 	- `cards/cardset.xml`: title, repository, public url
@@ -41,7 +47,8 @@
 - PDF export
 	- one 63 × 88 mm card per page, or A4 sheets (3 × 3 with cut lines)
 	- QR code: none, on the front, or on the back (A4 backs mirrored for double-sided printing)
-	- color or black & white
+	- color (same graded colors as on screen, white text) or black & white
+	- larger titles (up to 32 pt)
 	- QR codes point to the public url from `cardset.xml` (or keep the page path)
 	- QR codes are transparent PNGs in the card's ink color
 	- question / task cards can be printed too (never with a QR code)

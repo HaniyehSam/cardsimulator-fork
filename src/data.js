@@ -56,13 +56,14 @@ export async function loadDeck(base = "cards/") {
 //     <repo>https://github.com/user/leveldesigncards</repo>
 //     <url>https://user.github.io/leveldesigncards/</url>      (used by QR codes)
 //     <description>...</description>
+//     <grading>off</grading>   (optional: show the XML colors exactly as they are)
 //   </cardset>
 // Every field is optional, and a missing file is fine.
 export async function loadCardset(base = "cards/") {
     try {
         const doc = await fetchXml(base + "cardset.xml");
         const field = name => text(doc.getElementsByTagName(name)[0]) || undefined;
-        return { title: field("title"), repo: field("repo"), url: field("url"), description: field("description") };
+        return { title: field("title"), repo: field("repo"), url: field("url"), description: field("description"), grading: field("grading") };
     } catch {
         return {};
     }

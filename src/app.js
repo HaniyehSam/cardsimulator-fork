@@ -1,21 +1,23 @@
 // Card Simulator: the card table.
 // Desktop / tablet: arrange the cards on a table. Phone: a scrolling list.
 // Click a card to flip it: the back shows its questions, "inspire me" (a random
-// link) and "more" (all links, numbered).
+// link), "more" (all links, numbered) and previous / next. The PDF panel opens
+// and closes the same way, out of the "pdf" button.
 
 import { loadDeck, loadCardset, normalize } from "./data.js";
 import { generatePDF } from "./pdf.js";
-import { inkFor, deepShade, edgeFor } from "./color.js";
+import { gradeCategories, edgeFor } from "./color.js";
 
 const $ = (sel, el = document) => el.querySelector(sel);
 const $$ = (sel, el = document) => [...el.querySelectorAll(sel)];
 const rand = (a, b) => a + Math.random() * (b - a);
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const wait = ms => new Promise(r => setTimeout(r, ms));
 
 const RATIO = 88 / 63;   // card shape, same as the printed cards (63 x 88 mm)
-const ROTATION = 0.05;   // radians of "messiness" on the table
-const FLIP_MS = 700;
+const TILT = 0.045;      // radians: cards lying under others in a pile are slightly turned
+const FLIP_MS = 700;     // keep in sync with --flip in styles.css
 const GAP = 1.18;        // horizontal distance between stacks, in card widths
 const VGAP = 1.1;        // vertical distance between stacks, in card heights
 const PHONE = matchMedia("(max-width: 600px)");
@@ -24,6 +26,9 @@ const app = $("#app");
 const board = $("#board");
 const flip = $("#flip");
 const veil = $("#veil");
+
+// The PDF panel uses the same flip as the cards.
+const PDF_PANEL = { isPanel: true };
 
 const state = {
     deck: null,
@@ -35,16 +40,18 @@ const state = {
     sort: "natural",        // natural | az | shuffled
     five: [],               // the cards picked by "random 5"
     list: false,            // phone: scrolling list instead of the table
-    open: null,
+    open: null,             // the card (or PDF_PANEL) that is flipped open
     size: 150,              // card width; height is size * RATIO
     cols: 6,
     z: 10,
     dirty: false,
+    pdf: { qr: "front", bw: false, a4: false },
 };
 
 const cardH = () => state.size * RATIO;
 const label = card => card.title || card.text;
 const byLabel = (a, b) => label(a).localeCompare(label(b), undefined, { sensitivity: "base", numeric: true });
+const isCard = t => t && !t.isPanel;
 
 // ---------------------------------------------------------------------------
 // Boot
@@ -60,6 +67,8 @@ async function init() {
     state.deck = deck;
     state.cardset = cardset;
     state.cards = deck.cards;
+    const grading = (cardset.grading || "").toLowerCase();
+    gradeCategories(deck.categories, { mode: /^(off|none|false|no)$/.test(grading) ? "off" : grading === "calm" ? "calm" : "guard" });
     deck.categories.forEach(c => state.enabled.add(c.id));
     const questionCats = new Set(deck.cards.filter(c => c.type === "display").map(c => c.catId));
     deck.cards.forEach(c => c.tags.forEach(t => { if (!questionCats.has(t)) state.topics.add(t); }));
@@ -79,7 +88,7 @@ async function init() {
     if (matched.length) {
         if (!state.list) spotlight(matched);
         if (matched.length === 1 || params.get("open") === "true") {
-            setTimeout(() => openCard(matched[0], { updateUrl: false }), 250);
+            setTimeout(() => openFlip(matched[0], { updateUrl: false }), 250);
         }
     } else if (!state.list) {
         deal();
@@ -113,7 +122,7 @@ function findCards(param) {
 function buildCategories() {
     const nav = $("#cats");
     nav.innerHTML = state.deck.categories.map(cat => `
-        <button class="cat" type="button" data-cat="${cat.id}" data-row="${cat.row}" aria-pressed="true" style="--c:${cat.color};--edge:${edgeFor(cat.color)}">
+        <button class="cat" type="button" data-cat="${cat.id}" data-row="${cat.row}" aria-pressed="true" style="--c:${cat.tone};--edge:${edgeFor(cat.tone)}">
             <i aria-hidden="true"></i>${esc(cat.title)}
         </button>`).join("");
 
@@ -140,6 +149,7 @@ function onCategoriesChange() {
     applyVisibility();
     if (state.layout === "random5" && state.five.some(c => !isVisible(c))) layout("random5");
     else if (state.list) layoutList();
+    else straightenTops();
 }
 
 // A card shows when its own category is on. Question / task cards also need
@@ -173,16 +183,14 @@ const titleHTML = card => card.type === "display"
 const isOutline = card => card.type === "display" || card.category.onlyBorder;
 const tagCats = card => card.tags.map(t => state.deck.categories[t]).filter(Boolean);
 const tagDots = card => tagCats(card).length
-    ? `<span class="tags" aria-hidden="true">${tagCats(card).map(c => `<i style="--t:${c.color}"></i>`).join("")}</span>` : "";
+    ? `<span class="tags" aria-hidden="true">${tagCats(card).map(c => `<i style="--t:${c.tone}"></i>`).join("")}</span>` : "";
 
-// Colors a card face needs: category color, readable ink, deep shade for the back.
+// The colors a card face needs (graded, see color.js). Text is always pure white.
 function paintColors(el, card) {
-    const ink = isOutline(card) || card.category.isCover ? "#ededed" : inkFor(card.category.color);
-    el.style.setProperty("--c", card.category.color);
-    el.style.setProperty("--ink", ink);
-    el.classList.toggle("dark-ink", ink !== "#ffffff" && ink !== "#ededed");
-    el.style.setProperty("--back", isOutline(card) || card.category.isCover ? "#0b0b0b" : deepShade(card.category.color));
-    el.style.setProperty("--edge", edgeFor(card.category.color));
+    const plain = isOutline(card) || card.category.isCover;
+    el.style.setProperty("--c", card.category.tone);
+    el.style.setProperty("--back", plain ? "#0b0b0b" : card.category.deep);
+    el.style.setProperty("--edge", edgeFor(card.category.tone));
 }
 
 function buildBoard() {
@@ -197,7 +205,8 @@ function buildBoard() {
         el.setAttribute("aria-label", `${label(card)} (${card.category.title})`);
         card.el = el;
         card.titleEl = $(".card-title", el);
-        card.r = rand(-ROTATION, ROTATION);
+        card.r = 0;
+        card.tilt = rand(-TILT, TILT);
         card.x = card.y = card.fx = card.fy = 0;
         card.jx = rand(-4, 4); card.jy = rand(-4, 4);
         bindCardPointer(card);
@@ -233,7 +242,7 @@ function stackRows(cols) {
 }
 
 // Card size: on the table, the largest at which all stacks fit; on a phone,
-// two columns across the screen.
+// two columns across the screen. Whole pixels keep the text sharp.
 function measureSize() {
     const W = board.clientWidth, H = board.clientHeight;
     if (!W || !H) return false;
@@ -255,7 +264,7 @@ function measureSize() {
     state.size = size;
     state.cols = cols;
     board.style.setProperty("--card", size + "px");
-    board.style.setProperty("--card-h", (size * RATIO).toFixed(1) + "px");
+    board.style.setProperty("--card-h", Math.round(size * RATIO) + "px");
     return changed;
 }
 
@@ -265,7 +274,7 @@ function fitTitles() {
     const S = state.size;
     const pad = Math.round(S * 0.09);
     const innerW = S - 2 * pad - 2;
-    const innerH0 = cardH() - 2 * pad - 2;
+    const innerH0 = Math.round(cardH()) - 2 * pad - 2;
     const measure = $(".measure", board);
     measure.style.width = innerW + "px";
 
@@ -283,8 +292,8 @@ function fitTitles() {
         }
         measure.style.fontSize = best + "px";
         const tooTight = measure.scrollWidth > innerW + 0.5 || measure.scrollHeight > innerH;
-        card.font = best;
-        card.titleEl.style.fontSize = best.toFixed(1) + "px";
+        card.font = Math.floor(best * 2) / 2; // half pixels: still sharp, still fits
+        card.titleEl.style.fontSize = card.font + "px";
         card.titleEl.style.overflowWrap = tooTight ? "anywhere" : "";
     }
     measure.innerHTML = "";
@@ -306,6 +315,7 @@ function setMode(list, { initial = false } = {}) {
 
 function onResize() {
     if (!board.clientWidth || !board.clientHeight || !state.cards.length) return;
+    if (state.open) sizeFlip();
     if (PHONE.matches !== state.list) return setMode(PHONE.matches);
     if (measureSize()) fitTitles();
     if (state.list) return;
@@ -335,13 +345,33 @@ function setPos(card, x, y) {
     paint(card);
 }
 
+// Whole-pixel positions: fractional ones blur the text.
 function paint(card) {
-    card.el.style.setProperty("--x", (card.x - state.size / 2).toFixed(1) + "px");
-    card.el.style.setProperty("--y", (card.y - cardH() / 2).toFixed(1) + "px");
+    card.el.style.setProperty("--x", Math.round(card.x - state.size / 2) + "px");
+    card.el.style.setProperty("--y", Math.round(card.y - cardH() / 2) + "px");
     card.el.style.setProperty("--r", card.r.toFixed(4) + "rad");
 }
 
 const toFront = card => { card.el.style.zIndex = ++state.z; };
+const zOf = card => +card.el.style.zIndex || 0;
+
+// Every card you can read lies straight (sharp text); only cards mostly
+// covered by others keep a slight turn, so piles still look like piles.
+function straightenTops() {
+    if (state.list) return;
+    const S = state.size, h = cardH();
+    const shown = state.cards.filter(c => !c.el.hidden).sort((a, b) => zOf(b) - zOf(a));
+    shown.forEach((card, i) => {
+        let covered = false;
+        for (let j = 0; j < i && !covered; j++) {
+            const o = shown[j];
+            const ox = Math.max(0, S - Math.abs(o.x - card.x)), oy = Math.max(0, h - Math.abs(o.y - card.y));
+            covered = ox * oy > S * h * 0.55;
+        }
+        const r = covered ? card.tilt : 0;
+        if (r !== card.r) { card.r = r; paint(card); }
+    });
+}
 
 // ---------------------------------------------------------------------------
 // Layouts
@@ -369,7 +399,7 @@ function layout(kind, { instant = false, keepJitter = false } = {}) {
         if (state.sort !== "az") shuffleArray(state.cards);
         state.cards.forEach(c => {
             c.jx = rand(-4, 4); c.jy = rand(-4, 4);
-            c.r = rand(-ROTATION, ROTATION);
+            c.tilt = rand(-TILT, TILT);
         });
         if (kind === "random5") pickFive();
     }
@@ -380,6 +410,7 @@ function layout(kind, { instant = false, keepJitter = false } = {}) {
     const a = area(), S = state.size, h = cardH();
     let order = 0;
     const place = (card, x, y) => {
+        card.r = card.tilt;
         setPos(card, clamp(x, a.l - 6, a.r + 6), clamp(y, a.t - 12, a.b + 6));
         card.el.style.zIndex = ++state.z;
         if (!instant) card.el.style.setProperty("--delay", Math.min(order++ * 6, 360) + "ms");
@@ -408,13 +439,13 @@ function layout(kind, { instant = false, keepJitter = false } = {}) {
         // random 5: the rest of the deck as one pile in the middle, five cards around it
         const rest = cards.filter(c => !state.five.includes(c));
         rest.forEach((card, k) => place(card, a.cx + card.jx + Math.min(k, 20) * 0.2, a.cy + card.jy - Math.min(k, 20) * 0.35));
-        const rx = Math.min(a.w / 2, Math.max(S * 1.35, S * 2.2)), ry = Math.min(a.h / 2, h * 1.2);
+        const rx = Math.min(a.w / 2, S * 2.2), ry = Math.min(a.h / 2, h * 1.2);
         state.five.forEach((card, i) => {
             const ang = -Math.PI / 2 + i * (2 * Math.PI / 5);
-            card.r = rand(-0.03, 0.03);
             place(card, a.cx + Math.cos(ang) * rx, a.cy + Math.sin(ang) * ry);
         });
     }
+    straightenTops();
     if (!instant) animate();
 }
 
@@ -470,10 +501,10 @@ function spotlight(selected) {
     selected.forEach((card, i) => {
         const col = i % cols, row = Math.floor(i / cols);
         const inRow = Math.min(cols, selected.length - row * cols);
-        card.r = rand(-0.02, 0.02);
         setPos(card, a.cx + (col - (inRow - 1) / 2) * S * 1.15, a.cy + (row - (rows - 1) / 2) * h * 1.1);
         toFront(card);
     });
+    straightenTops();
     state.dirty = true;
 }
 
@@ -486,7 +517,7 @@ function shuffleArray(arr) {
 }
 
 // ---------------------------------------------------------------------------
-// Dragging (table only)
+// Picking up, moving and putting down cards (table only)
 // ---------------------------------------------------------------------------
 
 function bindCardPointer(card) {
@@ -505,6 +536,10 @@ function bindCardPointer(card) {
         };
         el.setPointerCapture(e.pointerId);
         toFront(card);
+        // picked up: straight, a little larger, higher shadow
+        card.r = 0;
+        paint(card);
+        el.classList.add("held");
     });
 
     el.addEventListener("pointermove", e => {
@@ -527,23 +562,22 @@ function bindCardPointer(card) {
         if (!drag || e.pointerId !== drag.id) return;
         const d = drag;
         drag = null;
-        el.classList.remove("dragging");
+        el.classList.remove("held", "dragging");
         if (!d.moved) {
-            if (!cancelled) openCard(card);
+            if (!cancelled) openFlip(card);
             return;
         }
         state.dirty = true;
-        card.r = rand(-ROTATION, ROTATION);
-        paint(card);
         const first = d.samples.find(s => e.timeStamp - s.t < 90) || d.samples[0];
         const dt = Math.max(1, e.timeStamp - first.t);
         const vx = (e.clientX - first.x) / dt, vy = (e.clientY - first.y) / dt;
         if (!cancelled && Math.hypot(vx, vy) > 0.5) glide(card, vx, vy);
+        else straightenTops();
     };
     el.addEventListener("pointerup", e => end(e, false));
     el.addEventListener("pointercancel", e => end(e, true));
     // keyboard (Enter / Space) and taps in the phone list
-    el.addEventListener("click", e => { if (e.detail === 0 || state.list) openCard(card); });
+    el.addEventListener("click", e => { if (e.detail === 0 || state.list) openFlip(card); });
 }
 
 // A released card keeps a little momentum and comes to rest.
@@ -559,7 +593,8 @@ function glide(card, vx, vy) {
         const f = Math.pow(0.99, dt);
         vx *= f; vy *= f;
         setPos(card, x, y);
-        card.anim = Math.hypot(vx, vy) > 0.02 ? requestAnimationFrame(step) : null;
+        if (Math.hypot(vx, vy) > 0.02) card.anim = requestAnimationFrame(step);
+        else { card.anim = null; straightenTops(); }
     };
     card.anim = requestAnimationFrame(step);
 }
@@ -568,11 +603,22 @@ function stopMomentum(card) { if (card.anim) cancelAnimationFrame(card.anim); ca
 function stopAllMomentum() { state.cards.forEach(stopMomentum); }
 
 // ---------------------------------------------------------------------------
-// Flipping a card open
+// The flip: an opened card, or the PDF panel
 // ---------------------------------------------------------------------------
 
+// Prompts are questions: each one ends with a "?". Task cards
+// ("Write an elevator pitch") are instructions, so they stay as written.
+const asQuestion = q => /[?？]$/.test(q) ? q : q.replace(/[\s.!:;,…]+$/, "") + "?";
+function promptItems(card) {
+    if (card.type === "display") {
+        const question = /[?？]$/.test(card.text);
+        return [{ text: card.text, question }];
+    }
+    return card.questions.map(q => ({ text: asQuestion(q), question: true }));
+}
+
 function backHTML(card) {
-    const prompts = card.type === "display" ? [card.text] : card.questions;
+    const prompts = promptItems(card);
     const n = card.links.length;
     const links = card.links.map((l, i) => `
         <li>
@@ -582,22 +628,63 @@ function backHTML(card) {
                 <span class="link-host">${esc(l.host)}</span>
             </a>
         </li>`).join("");
+    const order = browseOrder();
+    const pos = order.indexOf(card);
     return `
-        <div class="back-head">
-            <span>${esc(card.category.title)}</span>
-            <button type="button" data-act="close">close</button>
+        <div class="back-scroll" id="backScroll">
+            <div class="back-head">
+                <span>${esc(card.category.title)}</span>
+                <button type="button" data-act="close">close</button>
+            </div>
+            ${card.title ? `<h2 class="back-title" id="flipTitle">${esc(card.title)}</h2>` : ""}
+            <ul class="prompts"${card.title ? "" : ` id="flipTitle"`}>${prompts.map((p, i) =>
+                `<li style="--i:${i}">${esc(p.text)}</li>`).join("")}</ul>
+            ${tagCats(card).length ? `
+            <p class="related"><span>related</span>${tagCats(card).map(c =>
+                `<span class="related-cat" style="--t:${c.tone}"><i aria-hidden="true"></i>${esc(c.title)}</span>`).join("")}</p>` : ""}
+            ${n ? `
+            <div class="back-actions">
+                <button class="text-action" type="button" data-act="inspire">inspire me</button>
+                <button class="text-action" type="button" data-act="more" aria-expanded="false" aria-controls="flipLinks">more</button>
+            </div>
+            <ol class="links" id="flipLinks" hidden>${links}</ol>` : ""}
         </div>
-        ${card.title ? `<h2 class="back-title" id="flipTitle">${esc(card.title)}</h2>` : ""}
-        <ul class="prompts"${card.title ? "" : ` id="flipTitle"`}>${prompts.map((q, i) => `<li style="--i:${i}">${esc(q)}</li>`).join("")}</ul>
-        ${tagCats(card).length ? `
-        <p class="related"><span>related</span>${tagCats(card).map(c =>
-            `<span class="related-cat" style="--t:${c.color}"><i aria-hidden="true"></i>${esc(c.title)}</span>`).join("")}</p>` : ""}
-        ${n ? `
-        <div class="back-actions">
-            <button class="text-action" type="button" data-act="inspire">inspire me</button>
-            <button class="text-action" type="button" data-act="more" aria-expanded="false" aria-controls="flipLinks">more</button>
-        </div>
-        <ol class="links" id="flipLinks" hidden>${links}</ol>` : ""}`;
+        ${order.length > 1 ? `
+        <nav class="back-nav" aria-label="Cards">
+            <button type="button" data-act="prev"><span aria-hidden="true">‹</span> previous</button>
+            <span class="back-pos">${pos + 1} / ${order.length}</span>
+            <button type="button" data-act="next">next <span aria-hidden="true">›</span></button>
+        </nav>` : ""}`;
+}
+
+function pdfBackHTML() {
+    const cards = pdfCards();
+    const o = state.pdf;
+    const radio = (v, text) => `<label><input type="radio" name="qr" value="${v}"${o.qr === v ? " checked" : ""}> ${text}</label>`;
+    return `
+        <div class="back-scroll" id="backScroll">
+            <div class="back-head">
+                <span>pdf</span>
+                <button type="button" data-act="close">close</button>
+            </div>
+            <h2 class="back-title" id="flipTitle">print &amp; play</h2>
+            <p class="panel-note">A PDF of the ${cards.length} cards in the selected categories.</p>
+            <fieldset class="opts">
+                <legend>QR code</legend>
+                ${radio("none", "no QR code")}
+                ${radio("front", "QR on the front")}
+                ${radio("back", "QR on the back")}
+            </fieldset>
+            <fieldset class="opts">
+                <legend>print</legend>
+                <label><input type="checkbox" name="bw"${o.bw ? " checked" : ""}> black &amp; white</label>
+                <label><input type="checkbox" name="a4"${o.a4 ? " checked" : ""}> A4 sheets (9 cards per page)</label>
+            </fieldset>
+            <p class="panel-note small">Otherwise one 63 × 88 mm card per page.${cards.some(c => c.type === "display") ? " Question and task cards never get a QR code." : ""}</p>
+            <div class="back-actions">
+                <button class="text-action" type="button" data-act="generate">generate pdf</button>
+            </div>
+        </div>`;
 }
 
 // Open one of the card's links, picked at random.
@@ -617,8 +704,30 @@ function toggleLinks(btn) {
     if (show) list.scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 
-// Where the card is on screen: center, size and rotation.
-function cardRect(card) {
+// The opened card: card shaped, as large as fits; full screen on phones.
+// Whole pixels, so the text is sharp.
+function sizeFlip() {
+    let w, h;
+    if (PHONE.matches) { w = innerWidth; h = innerHeight; }
+    else {
+        w = Math.round(Math.min(500, innerWidth - 32, (innerHeight - 40) / RATIO));
+        h = Math.round(w * RATIO);
+    }
+    Object.assign(flip.style, {
+        width: w + "px", height: h + "px",
+        left: Math.round((innerWidth - w) / 2) + "px", top: Math.round((innerHeight - h) / 2) + "px",
+    });
+    flip.style.setProperty("--fw", w + "px");
+}
+
+// Where the flip comes from: the card on the table / in the list, or the
+// "pdf" button for the PDF panel.
+function sourceRect(target) {
+    if (target.isPanel) {
+        const r = $("#pdfBtn").getBoundingClientRect(), w = 44;
+        return { x: r.left + r.width / 2, y: r.top + r.height / 2 - w * RATIO / 2, w, h: w * RATIO, r: 0 };
+    }
+    const card = target;
     if (card.el.hidden || card.el.classList.contains("off")) {
         return { x: innerWidth / 2, y: innerHeight / 2 + 40, w: state.size, h: cardH(), r: 0 };
     }
@@ -630,27 +739,40 @@ function cardRect(card) {
     return { x: b.left + card.x, y: b.top + card.y, w: state.size, h: cardH(), r: card.r };
 }
 
-// The opened card as a transform back to where the card lies.
-function tableTransform(card) {
-    const c = cardRect(card), fw = flip.offsetWidth, fh = flip.offsetHeight;
-    return `translate(${(c.x - innerWidth / 2).toFixed(1)}px, ${(c.y - innerHeight / 2).toFixed(1)}px) rotate(${c.r.toFixed(4)}rad) scale(${(c.w / fw).toFixed(4)}, ${(c.h / fh).toFixed(4)})`;
+// The flip as a transform back to where it comes from.
+function sourceTransform(target) {
+    const c = sourceRect(target);
+    const fw = flip.offsetWidth, fh = flip.offsetHeight;
+    const cx = parseFloat(flip.style.left) + fw / 2, cy = parseFloat(flip.style.top) + fh / 2;
+    return `translate(${(c.x - cx).toFixed(1)}px, ${(c.y - cy).toFixed(1)}px) rotate(${c.r.toFixed(4)}rad) scale(${(c.w / fw).toFixed(4)}, ${(c.h / fh).toFixed(4)})`;
 }
 
-// When the opened card has another shape than the card (phone: full screen),
+// When the opened card has another shape than its source (phone: full screen),
 // stretch the front title the other way so it keeps its proportions while it turns.
 const frontTitle = () => $("#flipFront .card-title");
-function frontCounterScale(card) {
-    const c = cardRect(card);
+function frontCounterScale(target) {
+    const c = sourceRect(target);
     return `scaleY(${((c.w / flip.offsetWidth) / (c.h / flip.offsetHeight)).toFixed(4)})`;
 }
 
-function fillFlip(card) {
+function fillFlip(target) {
+    flip.classList.toggle("panel", !!target.isPanel);
+    if (target.isPanel) {
+        flip.style.setProperty("--c", "#0b0b0b");
+        flip.style.setProperty("--back", "#0b0b0b");
+        flip.style.setProperty("--edge", "rgba(255,255,255,0.2)");
+        flip.classList.add("cover");
+        flip.classList.remove("outline");
+        $("#flipBack").innerHTML = pdfBackHTML();
+        $("#flipFront").innerHTML = `<span class="card-title" style="font-size:${Math.round(flip.offsetWidth * 0.11)}px"><span>print &amp;</span><span>play</span></span>`;
+        return;
+    }
+    const card = target;
     paintColors(flip, card);
     flip.classList.toggle("cover", card.category.isCover);
     flip.classList.toggle("outline", isOutline(card));
     $("#flipBack").innerHTML = backHTML(card);
-    $("#flipBack").scrollTop = 0;
-    const scale = flip.offsetWidth / cardRect(card).w;
+    const scale = flip.offsetWidth / sourceRect(card).w;
     $("#flipFront").innerHTML = `<span class="card-title" style="font-size:${((card.font || 16) * scale).toFixed(1)}px">${titleHTML(card)}</span>${tagDots(card)}`;
 }
 
@@ -658,19 +780,21 @@ function setUrl(card) {
     history.replaceState(null, "", card ? `?card=${encodeURIComponent(card.slug)}` : location.pathname);
 }
 
-function openCard(card, { updateUrl = true } = {}) {
+let settleTimer;
+function openFlip(target, { updateUrl = true } = {}) {
     if (state.open) return;
-    state.open = card;
-    stopMomentum(card);
+    state.open = target;
+    if (isCard(target)) stopMomentum(target);
 
     flip.hidden = false;
     veil.hidden = false;
-    flip.classList.remove("animating", "open");
-    fillFlip(card);
+    flip.classList.remove("animating", "open", "flat");
+    sizeFlip();
+    fillFlip(target);
 
-    flip.style.transform = tableTransform(card);
-    frontTitle().style.transform = frontCounterScale(card);
-    card.el.classList.add("lifted");
+    flip.style.transform = sourceTransform(target);
+    frontTitle().style.transform = frontCounterScale(target);
+    if (isCard(target)) target.el.classList.add("lifted");
     flip.offsetWidth; // commit the start position
 
     flip.classList.add("animating", "open");
@@ -678,38 +802,45 @@ function openCard(card, { updateUrl = true } = {}) {
     frontTitle().style.transform = "";
     veil.classList.add("on");
     document.body.classList.add("card-open");
-    setTimeout(() => {
-        if (state.open !== card || flip.classList.contains("closing")) return;
-        flip.classList.remove("animating"); // done turning: swipes / arrow keys may step now
-        ($("[data-act=inspire]", flip) || $("[data-act=close]", flip))?.focus({ preventScroll: true });
+
+    // Once it has turned, drop the 3D: a flat card renders its text sharply.
+    clearTimeout(settleTimer);
+    settleTimer = setTimeout(() => {
+        if (state.open !== target || flip.classList.contains("closing")) return;
+        flip.classList.remove("animating");
+        flip.classList.add("flat");
+        ($("[data-act=inspire]", flip) || $("[data-act=generate]", flip) || $("[data-act=close]", flip))?.focus({ preventScroll: true });
     }, FLIP_MS);
 
-    if (updateUrl) setUrl(card);
+    if (updateUrl && isCard(target)) setUrl(target);
 }
 
-function closeCard() {
-    const card = state.open;
-    if (!card || flip.classList.contains("closing")) return;
-    if (state.list) card.el.scrollIntoView({ block: "nearest" });
+function closeFlip() {
+    const target = state.open;
+    if (!target || flip.classList.contains("closing")) return;
+    clearTimeout(settleTimer);
+    if (isCard(target) && state.list) target.el.scrollIntoView({ block: "nearest" });
+    flip.classList.remove("flat");
+    flip.offsetWidth; // back to 3D before turning
     flip.classList.add("animating", "closing");
     flip.classList.remove("open");
-    flip.style.transform = tableTransform(card);
-    frontTitle().style.transform = frontCounterScale(card);
+    flip.style.transform = sourceTransform(target);
+    frontTitle().style.transform = frontCounterScale(target);
     veil.classList.remove("on");
     document.body.classList.remove("card-open");
     setTimeout(() => {
         flip.hidden = true;
         veil.hidden = true;
-        flip.classList.remove("animating", "closing");
+        flip.classList.remove("animating", "closing", "panel");
         flip.style.transform = "";
-        card.el.classList.remove("lifted");
         state.open = null;
-        card.el.focus({ preventScroll: true });
+        if (isCard(target)) { target.el.classList.remove("lifted"); target.el.focus({ preventScroll: true }); }
+        else $("#pdfBtn").focus({ preventScroll: true });
     }, FLIP_MS);
-    setUrl(null);
+    if (isCard(target)) setUrl(null);
 }
 
-// Cards in the order they are shown, for next / previous.
+// Cards in the order they are shown, for previous / next.
 function browseOrder() {
     if (state.list) {
         return state.cards.filter(c => isVisible(c) && !c.el.classList.contains("off"))
@@ -719,36 +850,48 @@ function browseOrder() {
     return state.sort === "az" ? cards.sort(byLabel) : cards.sort((a, b) => a.index - b.index);
 }
 
-// Next / previous card while one is open (swipe, or the arrow keys).
+// Next / previous card while one is open (buttons, swipe, or the arrow keys).
+// The card itself stays: only its content slides out and the next card's
+// content slides in. The color only changes (as a smooth blend, see .face in
+// styles.css) when the next card belongs to another category.
 async function stepCard(dir) {
     const from = state.open;
-    if (!from || flip.classList.contains("animating") || flip.classList.contains("stepping")) return;
+    if (!isCard(from) || !flip.classList.contains("flat") || flip.classList.contains("stepping")) return;
     const order = browseOrder();
     if (order.length < 2) return;
     const i = order.indexOf(from);
     const to = order[(i + dir + order.length) % order.length];
     flip.classList.add("stepping");
     // never wait longer than the animation should take (paused animations in background tabs)
-    const settle = (anim, ms) => Promise.race([anim.finished, new Promise(r => setTimeout(r, ms + 60))]).catch(() => {});
-    await settle(flip.animate([{ transform: "none", opacity: 1 }, { transform: `translateX(${-dir * 60}px)`, opacity: 0 }], { duration: 160, easing: "ease-in" }), 160);
+    const settle = (anim, ms) => Promise.race([anim.finished, wait(ms + 60)]).catch(() => {});
+    const content = () => $("#backScroll");
+
+    await settle(content().animate(
+        [{ transform: "none", opacity: 1 }, { transform: `translateX(${-dir * 28}px)`, opacity: 0 }],
+        { duration: 150, easing: "cubic-bezier(0.4, 0, 1, 1)", fill: "forwards" }), 150);
+
     from.el.classList.remove("lifted");
     to.el.classList.add("lifted");
     if (!state.list) toFront(to);
     state.open = to;
-    fillFlip(to);
-    $$("#flipBack .prompts li").forEach(li => li.style.transitionDelay = "0s");
+    fillFlip(to); // new colors blend in via the .face transition
+    $$("#flipBack .prompts li, #flipBack .back-actions").forEach(el => el.style.transitionDelay = "0s");
     setUrl(to);
-    await settle(flip.animate([{ transform: `translateX(${dir * 60}px)`, opacity: 0 }, { transform: "none", opacity: 1 }], { duration: 200, easing: "ease-out" }), 200);
+
+    await settle(content().animate(
+        [{ transform: `translateX(${dir * 28}px)`, opacity: 0 }, { transform: "none", opacity: 1 }],
+        { duration: 240, easing: "cubic-bezier(0.2, 0.8, 0.2, 1)" }), 240);
     flip.classList.remove("stepping");
+    $(`[data-act=${dir > 0 ? "next" : "prev"}]`, flip)?.focus({ preventScroll: true });
 }
 
 // Phone: swipe left / right for the next / previous card, down to close.
 function bindSwipe() {
     let start = null;
     flip.addEventListener("touchstart", e => {
-        if (e.touches.length !== 1) return (start = null);
+        if (e.touches.length !== 1 || !isCard(state.open)) return (start = null);
         const t = e.touches[0];
-        start = { x: t.clientX, y: t.clientY, top: $("#flipBack").scrollTop };
+        start = { x: t.clientX, y: t.clientY, top: $("#backScroll")?.scrollTop || 0 };
     }, { passive: true });
     flip.addEventListener("touchend", e => {
         if (!start) return;
@@ -757,7 +900,7 @@ function bindSwipe() {
         const fromTop = start.top <= 0;
         start = null;
         if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.3) stepCard(dx < 0 ? 1 : -1);
-        else if (dy > 90 && fromTop && Math.abs(dy) > Math.abs(dx) * 1.3) closeCard();
+        else if (dy > 90 && fromTop && Math.abs(dy) > Math.abs(dx) * 1.3) closeFlip();
     }, { passive: true });
 }
 
@@ -772,7 +915,7 @@ function randomCard() {
     const card = list[Math.floor(Math.random() * list.length)];
     lastRandom = card;
     if (!state.list) toFront(card);
-    openCard(card);
+    openFlip(card);
 }
 
 function toggleSort() {
@@ -786,6 +929,38 @@ function shuffle() {
 }
 
 // ---------------------------------------------------------------------------
+// PDF
+// ---------------------------------------------------------------------------
+
+function pdfCards() {
+    return state.cards.filter(isVisible).sort((a, b) => a.index - b.index);
+}
+
+function readPdfOptions() {
+    state.pdf = {
+        qr: $("#flipBack input[name=qr]:checked")?.value || "front",
+        bw: !!$("#flipBack input[name=bw]")?.checked,
+        a4: !!$("#flipBack input[name=a4]")?.checked,
+    };
+}
+
+async function makePdf(btn) {
+    readPdfOptions();
+    if (!window.jspdf || !window.QRious) return alert("The PDF tools could not be loaded. Check your connection.");
+    btn.disabled = true;
+    btn.textContent = "making pdf…";
+    try {
+        await generatePDF(pdfCards(), { ...state.pdf, publicUrl: state.cardset?.url });
+        closeFlip();
+    } catch (err) {
+        console.error(err);
+        alert("Could not create the PDF: " + err.message);
+        btn.disabled = false;
+        btn.textContent = "generate pdf";
+    }
+}
+
+// ---------------------------------------------------------------------------
 // UI wiring
 // ---------------------------------------------------------------------------
 
@@ -794,56 +969,38 @@ function bindUi() {
     $("#shuffleBtn").addEventListener("click", shuffle);
     $("#sortBtn").addEventListener("click", toggleSort);
     $("#randomBtn").addEventListener("click", randomCard);
-    $("#pdfBtn").addEventListener("click", () => {
-        const cards = pdfCards();
-        $("#pdfCount").textContent = cards.length;
-        $("#pdfQrNote").hidden = !cards.some(c => c.type === "display");
-        $("#pdfDialog").returnValue = "";
-        $("#pdfDialog").showModal();
-    });
+    $("#pdfBtn").addEventListener("click", () => openFlip(PDF_PANEL));
 
     flip.addEventListener("click", e => {
-        const act = e.target.closest("[data-act]")?.dataset.act;
-        if (act === "close") closeCard();
+        const btn = e.target.closest("[data-act]");
+        const act = btn?.dataset.act;
+        if (act === "close") closeFlip();
         if (act === "inspire") inspire(state.open);
-        if (act === "more") toggleLinks(e.target.closest("[data-act]"));
+        if (act === "more") toggleLinks(btn);
+        if (act === "prev") stepCard(-1);
+        if (act === "next") stepCard(1);
+        if (act === "generate") makePdf(btn);
     });
-    veil.addEventListener("click", closeCard);
+    flip.addEventListener("change", () => { if (state.open?.isPanel) readPdfOptions(); });
+    veil.addEventListener("click", closeFlip);
     bindSwipe();
 
-    $("#pdfDialog").addEventListener("close", async () => {
-        if ($("#pdfDialog").returnValue !== "generate") return;
-        if (!window.jspdf || !window.QRious) return alert("The PDF tools could not be loaded. Check your connection.");
-        try {
-            await generatePDF(pdfCards(), {
-                qr: $("#pdfDialog input[name=qr]:checked")?.value || "front",
-                bw: $("#bwMode").checked,
-                a4: $("#a4Mode").checked,
-                publicUrl: state.cardset?.url,
-            });
-        } catch (err) {
-            console.error(err);
-            alert("Could not create the PDF: " + err.message);
-        }
-    });
-
     document.addEventListener("keydown", e => {
-        if (e.ctrlKey || e.metaKey || e.altKey || document.querySelector("dialog[open]")) return;
-        if (e.key === "Escape") return closeCard();
+        if (e.ctrlKey || e.metaKey || e.altKey) return;
+        if (e.key === "Escape") return closeFlip();
         if (state.open) {
+            if (!isCard(state.open)) return;
             if (e.key === "ArrowRight") stepCard(1);
             if (e.key === "ArrowLeft") stepCard(-1);
             return;
         }
+        if (e.target.closest("input, textarea, select")) return;
         if (e.key === "1") layout("stacks");
         if (e.key === "2" && !state.list) layout("pile");
         if (e.key === "3") layout("random5");
         if (e.key === "s" || e.key === "S") shuffle();
         if (e.key === "a" || e.key === "A") toggleSort();
         if (e.key === "r" || e.key === "R") randomCard();
+        if (e.key === "p" || e.key === "P") openFlip(PDF_PANEL);
     });
-}
-
-function pdfCards() {
-    return state.cards.filter(isVisible).sort((a, b) => a.index - b.index);
 }

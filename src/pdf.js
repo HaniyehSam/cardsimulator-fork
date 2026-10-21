@@ -1,5 +1,3 @@
-import { inkFor } from "./color.js";
-
 // Print & play PDF export.
 //
 // Options:
@@ -16,7 +14,7 @@ const CARD_W = 63;  // mm
 const CARD_H = 88;  // mm
 const A4 = { w: 210, h: 297 };
 const COLS = 3, ROWS = 3;
-const QR_FRONT = 26, QR_BACK = 34; // mm
+const QR_FRONT = 24, QR_BACK = 34; // mm
 
 // The font sits next to src/, wherever the simulator folder is.
 const FONT_URL = new URL("../fonts/HelveticaNeueUltraLightv130.ttf", import.meta.url).href;
@@ -45,11 +43,13 @@ export async function generatePDF(cards, { qr = "front", bw = false, a4 = false,
         pdf.setFont("helvetica");
     }
 
+    // Same colors as on screen (graded, see color.js); text and QR codes in pure white.
     const look = card => {
         const outline = card.type === "display" || card.category.onlyBorder;
+        const tone = card.category.tone || card.category.color;
         if (bw) return { fill: "#FFFFFF", ink: "#000000", frame: outline ? "#000000" : null };
-        if (outline) return { fill: "#000000", ink: "#FFFFFF", frame: card.category.color };
-        return { fill: card.category.color, ink: inkFor(card.category.color), frame: null };
+        if (outline) return { fill: "#000000", ink: "#FFFFFF", frame: tone };
+        return { fill: tone, ink: "#FFFFFF", frame: null };
     };
     const hasQR = card => qr !== "none" && card.type !== "display";
 
@@ -58,17 +58,17 @@ export async function generatePDF(cards, { qr = "front", bw = false, a4 = false,
         background(pdf, x, y, fill, frame);
         pdf.setTextColor(ink);
         const qrHere = qr === "front" && hasQR(card);
-        const area = { w: CARD_W - 10, h: qrHere ? CARD_H * 0.48 : CARD_H * 0.74 };
+        const area = { w: CARD_W - 8, h: qrHere ? CARD_H * 0.52 : CARD_H * 0.8 };
         const segments = card.type === "display" ? [card.text] : card.titleLines.length ? card.titleLines : [card.title];
-        const { lines, size, lineH } = fitTitle(pdf, segments, area, card.type === "display" ? 16 : 22);
+        const { lines, size, lineH } = fitTitle(pdf, segments, area, card.type === "display" ? 22 : 32);
         pdf.setFontSize(size);
-        const centerY = qrHere ? y + 6 + area.h / 2 : y + CARD_H / 2;
+        const centerY = qrHere ? y + 4 + area.h / 2 : y + CARD_H / 2;
         let ty = centerY - (lines.length * lineH) / 2 + lineH * 0.75;
         for (const line of lines) {
             pdf.text(line, x + CARD_W / 2, ty, { align: "center" });
             ty += lineH;
         }
-        if (qrHere) qrCode(pdf, cardUrl(card, publicUrl), ink, x + CARD_W / 2 - QR_FRONT / 2, y + CARD_H * 0.72 - QR_FRONT / 2, QR_FRONT);
+        if (qrHere) qrCode(pdf, cardUrl(card, publicUrl), ink, x + CARD_W / 2 - QR_FRONT / 2, y + CARD_H * 0.76 - QR_FRONT / 2, QR_FRONT);
     };
 
     const back = (card, x, y) => {
@@ -132,7 +132,7 @@ function qrCode(pdf, url, ink, x, y, size) {
 // Honor the authors' "/" breaks, wrap each segment to the width, and shrink the
 // font until the whole block fits the area (no word may overflow the width).
 function fitTitle(pdf, segments, area, maxSize) {
-    for (let size = maxSize; size >= 8; size -= 0.5) {
+    for (let size = maxSize; size >= 9; size -= 0.5) {
         pdf.setFontSize(size);
         const lineH = size * 0.3528 * 1.22; // pt -> mm, 1.22 leading
         const lines = segments.flatMap(s => pdf.splitTextToSize(s, area.w));
