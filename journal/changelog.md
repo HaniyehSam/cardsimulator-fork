@@ -27,7 +27,8 @@
 	- plain HTML/CSS/JS modules, no build step, no p5.js
 	- responsive: desktop, tablet, phone
 	- click a card to flip it: questions on the back, "inspire me" (random link) and "more" (numbered link list)
-	- "random card", stacks / pile / random 5 (a pile and five cards around it), shuffle, a–z sorting, category filters
+	- "random card", stacks / pile / random 5, shuffle, a–z sorting, category filters
+	- random 5: the deck is riffled in view, then five cards are dealt into a loose row at random heights (never the same five twice in a row)
 	- short deep links: `?card=name` opens the card
 	- cards have the printed shape (63 × 88) with rounded corners; Helvetica Neue UltraLight throughout
 	- phones: scrolling list, cards open full screen, swipe left / right for the next / previous card, down to close
@@ -50,7 +51,9 @@
 	- color (same graded colors as on screen, white text) or black & white
 	- larger titles (up to 32 pt)
 	- QR codes point to the public url from `cardset.xml` (or keep the page path)
-	- QR codes are transparent PNGs in the card's ink color
+	- QR codes are drawn as vector squares in the card's ink color: every code is exactly the same size (24 mm front, 34 mm back) and centered
+	- long words are never cut in the middle: the title shrinks until its longest word fits
+	- optional category circles at the bottom of every card (question / task cards: their category and all their topics)
 	- question / task cards can be printed too (never with a QR code)
 
 ## Release 0.40

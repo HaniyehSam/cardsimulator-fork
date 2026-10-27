@@ -1,5 +1,6 @@
 // Card Simulator: the card table.
-// Desktop / tablet: arrange the cards on a table. Phone: a scrolling list.
+// Desktop / tablet: arrange the cards on a table ("random 5" riffles the deck
+// and deals five). Phone: a scrolling list.
 // Click a card to flip it: the back shows its questions, "inspire me" (a random
 // link), "more" (all links, numbered) and previous / next. The PDF panel opens
 // and closes the same way, out of the "pdf" button.
@@ -21,6 +22,7 @@ const FLIP_MS = 700;     // keep in sync with --flip in styles.css
 const GAP = 1.18;        // horizontal distance between stacks, in card widths
 const VGAP = 1.1;        // vertical distance between stacks, in card heights
 const PHONE = matchMedia("(max-width: 600px)");
+const REDUCED = matchMedia("(prefers-reduced-motion: reduce)");
 
 const app = $("#app");
 const board = $("#board");
@@ -45,7 +47,7 @@ const state = {
     cols: 6,
     z: 10,
     dirty: false,
-    pdf: { qr: "front", bw: false, a4: false },
+    pdf: { qr: "front", bw: false, a4: false, circles: false },
 };
 
 const cardH = () => state.size * RATIO;
@@ -383,13 +385,43 @@ function dealOrder() {
     return state.cards;
 }
 
+// Five new cards: never one of the five on the table, while the deck has enough.
+// Each gets its own random offset from its spot (see fiveSpots).
 function pickFive() {
     const pool = shuffleArray(state.cards.filter(c => isVisible(c) && !c.category.isCover));
-    state.five = pool.slice(0, 5);
+    const fresh = pool.filter(c => !state.five.includes(c));
+    state.five = (fresh.length >= 5 ? fresh : pool).slice(0, 5);
+    state.five.forEach(c => { c.wx = rand(-1, 1); c.wy = rand(-1, 1); });
+}
+
+// "random 5" on the table: the deck on the left, the five dealt to its right
+// in a loose row (two rows when the table is narrow), each at a random height
+// and a little to the side, without touching its neighbours.
+function fiveSpots() {
+    const a = area(), S = state.size, h = cardH();
+    const deck = { x: a.l + Math.min(S * 0.2, a.w * 0.05), y: a.cy };
+    const x0 = Math.min(deck.x + S * 1.45, a.r), span = a.r - x0;
+    const oneRow = span / 4 >= S * 1.12 || a.h < h * 1.4;
+    const slots = oneRow ? [[0, 0], [0.25, 0], [0.5, 0], [0.75, 0], [1, 0]]
+        : [[0, -1], [0.5, -1], [1, -1], [0.25, 1], [0.75, 1]];
+    const step = span * (oneRow ? 0.25 : 0.5);
+    const side = Math.max(0, (step - S * 1.08) / 2);
+    // two rows: far enough apart that a card never touches one in the other row
+    const rowY = oneRow ? 0 : Math.min(h * 0.64, a.h / 2);
+    const lift = oneRow ? Math.min(h * 0.9, a.h / 2) : Math.max(0, Math.min(h * 0.2, rowY - h * 0.53, a.h / 2 - rowY));
+    const five = state.five.map((card, i) => {
+        const [u, row] = slots[i];
+        return {
+            x: clamp(x0 + u * span + (card.wx || 0) * side, x0, a.r),
+            y: clamp(a.cy + row * rowY + (card.wy || 0) * lift, a.t, a.b),
+        };
+    });
+    return { deck, five };
 }
 
 function layout(kind, { instant = false, keepJitter = false } = {}) {
     stopAllMomentum();
+    dealRun++;
     state.layout = kind;
     state.dirty = false;
     $$("#layouts [data-layout]").forEach(b => b.setAttribute("aria-checked", String(b.dataset.layout === kind)));
@@ -436,14 +468,12 @@ function layout(kind, { instant = false, keepJitter = false } = {}) {
     } else if (kind === "pile") {
         cards.forEach((card, k) => place(card, a.cx + card.jx * 1.5 + Math.min(k, 30) * 0.15, a.cy + card.jy * 1.5 - Math.min(k, 30) * 0.3));
     } else {
-        // random 5: the rest of the deck as one pile in the middle, five cards around it
+        // random 5: the rest of the deck as one pile, the five dealt out of it
+        const spots = fiveSpots();
+        if (!instant && !keepJitter && !REDUCED.matches) return shuffleAndDeal(spots);
         const rest = cards.filter(c => !state.five.includes(c));
-        rest.forEach((card, k) => place(card, a.cx + card.jx + Math.min(k, 20) * 0.2, a.cy + card.jy - Math.min(k, 20) * 0.35));
-        const rx = Math.min(a.w / 2, S * 2.2), ry = Math.min(a.h / 2, h * 1.2);
-        state.five.forEach((card, i) => {
-            const ang = -Math.PI / 2 + i * (2 * Math.PI / 5);
-            place(card, a.cx + Math.cos(ang) * rx, a.cy + Math.sin(ang) * ry);
-        });
+        rest.forEach((card, k) => place(card, ...pileSpot(spots.deck, card, k)));
+        state.five.forEach((card, i) => place(card, spots.five[i].x, spots.five[i].y));
     }
     straightenTops();
     if (!instant) animate();
@@ -468,11 +498,75 @@ function layoutList() {
     deckTile.innerHTML = `<span>${rest} more</span><b>deal 5 new</b>`;
 }
 
-let animTimer;
-function animate() {
-    board.classList.add("dealing");
+const pileSpot = (at, card, k) => [at.x + card.jx + Math.min(k, 20) * 0.2, at.y + card.jy - Math.min(k, 20) * 0.35];
+
+// "random 5", so you can see it is random: all cards go back on the deck, the
+// deck is riffled twice (cut in two halves side by side, pushed back together
+// in a new order), then the top five are dealt one by one.
+let dealRun = 0, dealing = 0;
+async function shuffleAndDeal({ deck, five }) {
+    const run = dealing = dealRun;
+    const S = state.size;
+    const shown = state.cards.filter(c => !c.el.hidden);
+    const pileUp = (list, at) => list.forEach((c, k) => {
+        c.el.style.setProperty("--delay", "0ms");
+        c.r = c.tilt;
+        setPos(c, ...pileSpot(at, c, k));
+    });
+    const restack = () => {
+        const order = shuffleArray([...shown]).filter(c => !state.five.includes(c));
+        [...order, ...state.five].forEach(toFront);
+        return order;
+    };
+    // false when another layout took over; if that one doesn't animate, stop ours
+    const step = async pause => {
+        await wait(pause);
+        if (run === dealRun) return true;
+        if (animTimer === null && dealing !== dealRun) endDealing(0);
+        return false;
+    };
+
     clearTimeout(animTimer);
-    animTimer = setTimeout(() => board.classList.remove("dealing"), 1000);
+    animTimer = null;
+    board.classList.add("dealing");
+    state.cards.filter(c => c.el.hidden).forEach(c => setPos(c, deck.x, deck.y));
+    board.style.setProperty("--deal-ms", "300ms");
+    pileUp([...restack(), ...state.five], deck);
+    if (!await step(320)) return;
+    for (let t = 0; t < 2; t++) {
+        const half = shown.filter(() => Math.random() < 0.5);
+        board.style.setProperty("--deal-ms", "200ms");
+        pileUp(half, { x: deck.x + S * 1.12, y: deck.y - S * 0.08 });
+        if (!await step(220)) return;
+        const order = restack();
+        pileUp(order, deck);
+        state.five.forEach(c => setPos(c, ...pileSpot(deck, c, order.length)));
+        if (!await step(230)) return;
+    }
+    board.style.setProperty("--deal-ms", "520ms");
+    state.five.forEach((card, i) => {
+        card.el.style.setProperty("--delay", i * 140 + "ms");
+        toFront(card);
+        setPos(card, five[i].x, five[i].y);
+    });
+    straightenTops();
+    endDealing(520 + 4 * 140 + 60);
+}
+
+let animTimer = null;
+function animate() {
+    board.style.removeProperty("--deal-ms");
+    board.classList.add("dealing");
+    endDealing(1000);
+}
+
+function endDealing(after) {
+    clearTimeout(animTimer);
+    animTimer = setTimeout(() => {
+        board.classList.remove("dealing");
+        board.style.removeProperty("--deal-ms");
+        animTimer = null;
+    }, after);
 }
 
 // Intro: the cards slide out of one pile into the layout.
@@ -679,6 +773,7 @@ function pdfBackHTML() {
                 <legend>print</legend>
                 <label><input type="checkbox" name="bw"${o.bw ? " checked" : ""}> black &amp; white</label>
                 <label><input type="checkbox" name="a4"${o.a4 ? " checked" : ""}> A4 sheets (9 cards per page)</label>
+                <label><input type="checkbox" name="circles"${o.circles ? " checked" : ""}> category circles at the bottom</label>
             </fieldset>
             <p class="panel-note small">Otherwise one 63 × 88 mm card per page.${cards.some(c => c.type === "display") ? " Question and task cards never get a QR code." : ""}</p>
             <div class="back-actions">
@@ -941,6 +1036,7 @@ function readPdfOptions() {
         qr: $("#flipBack input[name=qr]:checked")?.value || "front",
         bw: !!$("#flipBack input[name=bw]")?.checked,
         a4: !!$("#flipBack input[name=a4]")?.checked,
+        circles: !!$("#flipBack input[name=circles]")?.checked,
     };
 }
 
@@ -950,7 +1046,7 @@ async function makePdf(btn) {
     btn.disabled = true;
     btn.textContent = "making pdf…";
     try {
-        await generatePDF(pdfCards(), { ...state.pdf, publicUrl: state.cardset?.url });
+        await generatePDF(pdfCards(), { ...state.pdf, categories: state.deck.categories, publicUrl: state.cardset?.url });
         closeFlip();
     } catch (err) {
         console.error(err);

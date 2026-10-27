@@ -5,7 +5,7 @@ A **tool** to visualise / create / provide **brainstorming cards**.
 - digital cards in the browser: arrange them (stacks, pile, random 5), sort a–z, flip one to read its questions
 - "inspire me": a random link from the card; "more": all of its links
 - phones: a scrolling list, cards open full screen, swipe for the next / previous card
-- print & play PDFs (63 × 88 mm cards or A4 sheets, QR code on the front or back, color or black & white)
+- print & play PDFs (63 × 88 mm cards or A4 sheets, QR code on the front or back, color or black & white, optional category circles)
 
 Arrange / think / discuss!
 

@@ -158,7 +158,7 @@ a { color: inherit; }
 .card.lifted { visibility: hidden; }
 .board.dealing .card {
     transition:
-        translate 600ms var(--ease) var(--delay, 0ms),
+        translate var(--deal-ms, 600ms) var(--ease) var(--delay, 0ms),
         rotate var(--move) var(--ease),
         scale var(--quick) var(--ease),
         box-shadow var(--quick) var(--ease);
